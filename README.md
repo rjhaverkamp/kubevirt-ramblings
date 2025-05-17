@@ -2,6 +2,8 @@
 
 This comprehensive guide covers everything you need to set up a Talos OS cluster using Docker, install KubeVirt and Multus CNI, and deploy virtual machines with multiple network interfaces. Multus CNI will handle the bridge creation automatically through network attachment definitions.
 
+We will also add 2 vxlans, that will allow our multi-tenant virtual machines to communicate with each other. Even when they have overlapping address ranges.
+
 ## Table of Contents
 - [Prerequisites](#prerequisites)
 - [Step 1: Install Talos CLI Tool](#step-1-install-talos-cli-tool)
@@ -10,6 +12,7 @@ This comprehensive guide covers everything you need to set up a Talos OS cluster
 - [Step 4: Install Multus CNI](#step-4-install-multus-cni)
 - [Step 5: Configure Network Attachments](#step-5-configure-network-attachments)
 - [Step 6: Create and Deploy VMs](#step-6-create-and-deploy-vms)
+- [Step 7: VXLAN Setup](#step-7-vxlan-setup)
 - [Troubleshooting](#troubleshooting)
 - [Cleanup](#cleanup)
 
@@ -75,41 +78,24 @@ Replace `10.5.0.2` with the actual IP of your control plane node.
 
 ## Step 3: Install KubeVirt
 
-1. Create the necessary namespaces:
+We've created a shell script that handles all the KubeVirt installation steps automatically. This script:
+- Creates the necessary namespace
+- Downloads and applies the KubeVirt operator
+- Creates the KubeVirt custom resource
+- Waits for KubeVirt to become ready
+- Installs the virtctl tool for VM management
+
+Run the installation script:
 
 ```bash
-kubectl apply -f kubevirt-namespaces.yaml
+# Make the script executable (if not already)
+chmod +x install-kubevirt.sh
+
+# Run the installation script
+./install-kubevirt.sh
 ```
 
-2. Deploy the KubeVirt operator:
-
-```bash
-# Get the latest KubeVirt version
-export VERSION=$(curl -s https://api.github.com/repos/kubevirt/kubevirt/releases | grep tag_name | grep -v -- '-rc' | sort -r | head -1 | awk -F': ' '{print $2}' | sed 's/,//' | xargs)
-
-# Deploy the KubeVirt operator
-kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/kubevirt-operator.yaml
-```
-
-3. Create the KubeVirt custom resource:
-
-```bash
-kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/kubevirt-cr.yaml
-```
-
-4. Wait for KubeVirt to become ready:
-
-```bash
-kubectl -n kubevirt wait kv kubevirt --for condition=Available --timeout=300s
-```
-
-5. Install the virtctl tool for VM management:
-
-```bash
-curl -L -o virtctl https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/virtctl-${VERSION}-linux-amd64
-chmod +x virtctl
-sudo mv virtctl /usr/local/bin
-```
+Once the script completes successfully, KubeVirt will be installed and ready to use.
 
 ## Step 4: Install Multus CNI and Whereabouts IPAM
 
@@ -144,9 +130,9 @@ kubectl get pods -n kube-system | grep whereabouts
 
 ## Step 5: Configure Network Attachments
 
-We'll create two different NetworkAttachmentDefinitions to demonstrate both host-local and Whereabouts IPAM plugins.
+We'll create two different NetworkAttachmentDefinitions to demonstrate the Whereabouts IPAM plugin, and show overlapping IP ranges.
 
-First, create a file named `bridge-network.yaml` for the bridge network using host-local IPAM:
+To deploy the network attachment definitions, run the following commands:
 
 ```bash
 kubectl apply -f bridge-network.yaml
@@ -164,11 +150,13 @@ When these NetworkAttachmentDefinitions are applied, Multus CNI will automatical
 
 ## Step 6: Create and Deploy VMs
 
-Create a VM with multiple network interfaces:
+We will create 2 virtual machines, this is done by applying the following yaml files:
 
 ```bash
 kubectl apply -f multinet-vm1.yaml
 kubectl apply -f multinet-vm2.yaml
+kubectl apply -f multinet-vm3.yaml
+kubectl apply -f multinet-vm4.yaml
 ```
 
 Monitor VM creation:
@@ -178,24 +166,53 @@ kubectl get vms
 kubectl get vmis
 ```
 
-Once the VM is running, access the console:
+Start the console to all VMs like this:
 
 ```bash
-virtctl console multinet-vm
+kubectl virt console vm1 # user: ubuntu password: password
+kubectl virt console vm2 # user: ubuntu password: password
+kubectl virt console vm3 # user: ubuntu password: password
+kubectl virt console vm4 # user: ubuntu password: password
 ```
 
-Inside the VM, verify the network interfaces:
+and run `sudo dhclient`.
+
+## Step 7: VXLAN Setup
+
+Deploy the `netadmin-ds.yaml` tooling:
 
 ```bash
-# Inside the VM
-ip a
-
-# Test connectivity
-ping -c 3 8.8.8.8        # Default pod network
-ping -c 3 192.168.100.1  # Bridge network
+kubectl apply -f netadmin-ds.yaml
 ```
+
+Now exec into the pods on each host:
+
+```bash
+kubectl exec -it netadmin-ds-<pod-id> -n kube-system -- /bin/bash
+```
+
+and run the following commands:
+
+```bash
+ip link add vxlan100 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan100 up ; ip link set vxlan100 master br1
+ip link add vxlan200 type vxlan id 200 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan200 up ; ip link set vxlan200 master br2
+```
+
+### Tenant Configuration
+
+The following table shows the multi-tenant setup with VMs and their network configurations:
+
+| Tenant | VMs | Subnet | VXLAN ID | Bridge | Node Placement |
+|--------|-----|--------|----------|--------|----------------|
+| Tenant 1 | vm1, vm3 | 192.168.1.0/24 | vxlan100 | br1 | Anti-affinity between VMs |
+| Tenant 2 | vm2, vm4 | 192.168.1.0/24 | vxlan200 | br2 | Anti-affinity between VMs |
+
+This configuration demonstrates how multiple tenants can use the same IP address range (192.168.1.0/24) without conflicts by isolating their traffic through separate VXLAN networks. The VMs are placed on different nodes using anti-affinity rules to ensure high availability.
+
 
 ## Troubleshooting
+
+???
 
 ### KubeVirt Issues
 

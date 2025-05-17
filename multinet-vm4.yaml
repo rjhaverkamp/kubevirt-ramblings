@@ -1,14 +1,14 @@
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
-  name: vm2
+  name: vm4
   namespace: default
 spec:
   running: true
   template:
     metadata:
       labels:
-        kubevirt.io/vm: vm2
+        kubevirt.io/vm: vm4
       annotations:
         k8s.v1.cni.cncf.io/networks: bridge-network2
     spec:

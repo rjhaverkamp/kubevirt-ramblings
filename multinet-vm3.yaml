@@ -1,17 +1,27 @@
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
-  name: vm2
+  name: vm3
   namespace: default
 spec:
   running: true
   template:
     metadata:
       labels:
-        kubevirt.io/vm: vm2
+        kubevirt.io/vm: vm3
       annotations:
-        k8s.v1.cni.cncf.io/networks: bridge-network2
+        k8s.v1.cni.cncf.io/networks: bridge-network1
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: kubevirt.io/vm
+                    operator: In
+                    values:
+                      - vm1
+              topologyKey: kubernetes.io/hostname
       domain:
         devices:
           disks:
@@ -35,11 +45,11 @@ spec:
           pod: {}
         - name: bridge-iface
           multus:
-            networkName: bridge-network2
+            networkName: bridge-network1
       volumes:
         - name: containerdisk
           containerDisk:
-            image: mcas/kubevirt-ubuntu-20.04:latest
+            image: quay.io/kubevirt/cirros-container-disk-demo:latest
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -47,3 +57,12 @@ spec:
               password: password
               chpasswd: { expire: False }
               ssh_pwauth: True
+              write_files:
+              - path: /etc/network/interfaces.d/eth1.cfg
+                content: |
+                  auto eth1
+                  iface eth1 inet static
+                  address 192.168.1.2
+                  netmask 255.255.255.0
+              runcmd:
+              - ifup eth1

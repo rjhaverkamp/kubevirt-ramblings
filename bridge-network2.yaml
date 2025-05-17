@@ -8,7 +8,7 @@ spec:
     "name": "bridge-network2",
     "type": "bridge",
     "bridge": "br2",
-    "isGateway": true,
+    "isGateway": false,
     "ipam": {
       "type": "whereabouts",
       "range": "192.168.1.0/24",
