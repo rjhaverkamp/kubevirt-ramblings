@@ -78,17 +78,7 @@ Replace `10.5.0.2` with the actual IP of your control plane node.
 1. Create the necessary namespaces:
 
 ```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: kubevirt
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: cdi
-EOF
+kubectl apply -f kubevirt-namespaces.yaml
 ```
 
 2. Deploy the KubeVirt operator:

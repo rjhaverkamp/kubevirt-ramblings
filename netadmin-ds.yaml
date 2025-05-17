@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: debug-tools
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ubuntu-netadmin
+  namespace: debug-tools
+  labels:
+    app: ubuntu-netadmin
+spec:
+  selector:
+    matchLabels:
+      app: ubuntu-netadmin
+  template:
+    metadata:
+      labels:
+        app: ubuntu-netadmin
+    spec:
+      containers:
+        - name: ubuntu
+          image: ubuntu
+          command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              apt-get update
+              apt-get install -y iproute2 iputils-ping net-tools traceroute tcpdump curl wget dnsutils nftables iptables
+              echo "Network tools installed. Container will sleep now..."
+              sleep infinity
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "SYS_ADMIN"]
+            runAsUser: 0
+      restartPolicy: Always
+      hostIPC: true
+      hostNetwork: true
+      hostPID: true
