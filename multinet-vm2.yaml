@@ -1,0 +1,49 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: vm2
+  namespace: default
+spec:
+  running: true
+  template:
+    metadata:
+      labels:
+        kubevirt.io/vm: vm2
+      annotations:
+        k8s.v1.cni.cncf.io/networks: bridge-network2
+    spec:
+      domain:
+        devices:
+          disks:
+            - name: containerdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+            - name: bridge-iface
+              bridge: {}
+        resources:
+          requests:
+            memory: 1024M
+            cpu: "1"
+      networks:
+        - name: default
+          pod: {}
+        - name: bridge-iface
+          multus:
+            networkName: bridge-network2
+      volumes:
+        - name: containerdisk
+          containerDisk:
+            image: quay.io/kubevirt/cirros-container-disk-demo:latest
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              password: password
+              chpasswd: { expire: False }
+              ssh_pwauth: True

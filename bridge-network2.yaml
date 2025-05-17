@@ -1,0 +1,18 @@
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: bridge-network2
+spec:
+  config: '{
+    "cniVersion": "0.3.0",
+    "name": "bridge-network2",
+    "type": "bridge",
+    "bridge": "br2",
+    "isGateway": true,
+    "ipam": {
+      "type": "whereabouts",
+      "range": "192.168.1.0/24",
+      "network_name": "bridge-network2",
+      "enable_overlapping_range": true
+    }
+  }'
