@@ -3,8 +3,7 @@ set -e
 
 # Create the necessary namespace
 kubectl create namespace kubevirt 2>/dev/null || echo "Namespace kubevirt already exists"
-3veth0ee934c3veth0ee934c3veth0ee934bjjxhnhtnydngpckjbdxcjncu
-c
+
 # Use a specific stable KubeVirt version that's known to work
 export VERSION=v1.5.1
 
@@ -30,3 +29,24 @@ if [ ! -f /usr/local/bin/virtctl ]; then
 fi
 
 echo "KubeVirt installation complete!"
+
+# Install Multus CNI
+echo "Installing Multus CNI..."
+kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml
+
+echo "Waiting for Multus CNI to be ready..."
+kubectl rollout status -n kube-system daemonset/kube-multus-ds --timeout=180s
+
+# Install Whereabouts IPAM
+echo "Installing Whereabouts IPAM..."
+kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/daemonset-install.yaml
+
+# Install Whereabouts CRDs
+echo "Installing Whereabouts CRDs..."
+kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/whereabouts.cni.cncf.io_ippools.yaml
+kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml
+
+echo "Waiting for Whereabouts to be ready..."
+kubectl rollout status -n kube-system daemonset/whereabouts --timeout=180s
+
+echo "Multus CNI and Whereabouts IPAM installation complete!"
