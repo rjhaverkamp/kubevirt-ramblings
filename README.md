@@ -23,7 +23,7 @@ We will also add 2 vxlans, that will allow our multi-tenant virtual machines to 
 - Root or sudo access
 - Internet connection for downloading components
 
-## Step 1: Install Talos CLI Tool
+## Step 1: Install Talos CLI Tool and krew setup
 
 Download and install the Talos CLI tool (talosctl):
 
@@ -38,6 +38,28 @@ Verify installation:
 
 ```bash
 talosctl version
+```
+
+
+Install the Krew plugin manager:
+
+```
+(
+  set -x; cd "$(mktemp -d)" &&
+  OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
+  ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
+  KREW="krew-${OS}_${ARCH}" &&
+  curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
+  tar zxvf "${KREW}.tar.gz" &&
+  ./"${KREW}" install krew
+)
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH" # add this line to your shell profile to make it permanent
+```
+
+now install the `kubevirt` kubectl plugin:
+
+```
+kubectl krew install kubevirt
 ```
 
 ## Step 2: Create a Talos Cluster with Docker
@@ -74,6 +96,17 @@ talosctl --nodes 10.5.0.2 get members
 ```
 
 Replace `10.5.0.2` with the actual IP of your control plane node.
+
+### trouble shooting talos cluster creation
+
+When you're running this guide on linux and run into issues during cluster creation, related to kube-dns/core dns you might need to run these commands:
+
+```
+echo "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.conf
+modprobe bridge
+modprobe br_netfilter
+sysctl -p /etc/sysctl.conf
+```
 
 ## Step 3: Install KubeVirt, Multus CNI, and Whereabouts IPAM
 
@@ -171,7 +204,7 @@ kubectl apply -f netadmin-ds.yaml
 Now exec into the pods on each host:
 
 ```bash
-kubectl exec -it netadmin-ds-<pod-id> -n kube-system -- /bin/bash
+kubectl exec -it ubuntu-netadmin-<pod-id> -n debug-tools -- /bin/bash
 ```
 
 and run the following commands:

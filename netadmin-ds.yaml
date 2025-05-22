@@ -31,8 +31,8 @@ spec:
               apt-get update
               apt-get install -y iproute2 iputils-ping net-tools traceroute tcpdump curl wget dnsutils nftables iptables
               echo "Network tools installed. Container will sleep now..."
-              ip link add vxlan100 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan100 up ; ip link set vxlan100 master br1
-              ip link add vxlan200 type vxlan id 200 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan200 up ; ip link set vxlan200 master br2
+              # ip link add vxlan100 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan100 up ; ip link set vxlan100 master br1
+              # ip link add vxlan200 type vxlan id 200 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan200 up ; ip link set vxlan200 master br2
               sleep infinity
           imagePullPolicy: IfNotPresent
           securityContext:
