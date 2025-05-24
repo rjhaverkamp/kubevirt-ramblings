@@ -12,6 +12,7 @@ We will also add 2 vxlans, that will allow our multi-tenant virtual machines to 
 - [Step 4: Configure Network Attachments](#step-4-configure-network-attachments)
 - [Step 5: Create and Deploy VMs](#step-5-create-and-deploy-vms)
 - [Step 6: VXLAN Setup](#step-6-vxlan-setup)
+- [Step 7: Advanced VXLAN over EVPN with BGP](#step-7-advanced-vxlan-over-evpn-with-bgp)
 - [Troubleshooting](#troubleshooting)
 - [Cleanup](#cleanup)
 
@@ -225,7 +226,88 @@ The following table shows the multi-tenant setup with VMs and their network conf
 
 This configuration demonstrates how multiple tenants can use the same IP address range (192.168.1.0/24) without conflicts by isolating their traffic through separate VXLAN networks. The VMs are placed on different nodes using anti-affinity rules to ensure high availability.
 
+## Step 7: Advanced VXLAN over EVPN with BGP
 
+For more advanced networking scenarios, we can deploy BGP spines on each worker node to enable EVPN (Ethernet VPN) with VXLAN overlays. This provides dynamic MAC and IP learning across the cluster.
+
+### Deploy BGP Spine Routers
+
+First, deploy the BGP spine configurations on both worker nodes:
+
+```bash
+kubectl apply -f spine-worker-1-ds.yaml
+kubectl apply -f spine-worker-2-ds.yaml
+```
+
+These deployments will:
+- Install FRR (Free Range Routing) on each worker node
+- Configure BGP with EVPN address family
+- Create VXLAN 300 with automatic bridge attachment
+- Enable dynamic route advertisement between nodes
+
+### Create Advanced Network Attachment
+
+Deploy the bridge network for VXLAN 300:
+
+```bash
+kubectl apply -f bridge-network300.yaml
+```
+
+This creates a NetworkAttachmentDefinition that uses the `br300` bridge created by the spine routers.
+
+### Deploy VMs with EVPN Connectivity
+
+Create VMs that will use the EVPN-enabled network:
+
+```bash
+kubectl apply -f multinet-vm5.yaml
+kubectl apply -f multinet-vm6.yaml
+```
+
+### Verify EVPN Configuration
+
+Once deployed, you can verify the BGP EVPN setup:
+
+```bash
+# Check that spine pods are running
+kubectl get pods -n networking
+
+# Exec into a spine pod to check BGP status
+kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- vtysh -c "show bgp l2vpn evpn summary"
+
+# Check VXLAN interface and bridge configuration
+kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- ip link show vxlan300
+kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- brctl show br300
+```
+
+### Testing EVPN Connectivity
+
+Start the VMs and test connectivity:
+
+```bash
+# Start VM consoles
+kubectl virt console vm5  # user: ubuntu password: password
+kubectl virt console vm6  # user: ubuntu password: password
+```
+
+Inside each VM, configure the bridge interface and test connectivity:
+
+```bash
+# In both VMs, configure the bridge interface
+sudo dhclient eth1
+
+# Check IP assignment
+ip addr show eth1
+
+# Test connectivity between VMs (they should be able to ping each other)
+ping <other-vm-ip>
+```
+
+The EVPN setup provides:
+- Automatic MAC address learning and distribution
+- Dynamic VXLAN tunnel establishment
+- Layer 2 connectivity across nodes with Layer 3 underlay
+- BGP-based control plane for network advertisements
 
 ## Troubleshooting
 
