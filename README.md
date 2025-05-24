@@ -228,22 +228,24 @@ This configuration demonstrates how multiple tenants can use the same IP address
 
 ## Step 7: Advanced VXLAN over EVPN with BGP
 
-For more advanced networking scenarios, we can deploy BGP spines on each worker node to enable EVPN (Ethernet VPN) with VXLAN overlays. This provides dynamic MAC and IP learning across the cluster.
+For more advanced networking scenarios, we can deploy BGP EVPN routers on each worker node to enable EVPN (Ethernet VPN) with VXLAN overlays. This provides dynamic MAC and IP learning across the cluster.
 
-### Deploy BGP Spine Routers
+### Deploy BGP EVPN Routers
 
-First, deploy the BGP spine configurations on both worker nodes:
+First, deploy the BGP EVPN configurations on both worker nodes:
 
 ```bash
-kubectl apply -f spine-worker-1-ds.yaml
-kubectl apply -f spine-worker-2-ds.yaml
+kubectl apply -f evpn-control-1-ds.yaml
+kubectl apply -f evpn-worker-1-ds.yaml
+kubectl apply -f evpn-worker-2-ds.yaml
 ```
 
 These deployments will:
+- Install FRR on the control plane node
 - Install FRR (Free Range Routing) on each worker node
+- The bgp setup uses ebgp, the control plane doesn't announce anything but thanks to ebgp acts as a route refelctor.
 - Configure BGP with EVPN address family
 - Create VXLAN 300 with automatic bridge attachment
-- Enable dynamic route advertisement between nodes
 
 ### Create Advanced Network Attachment
 
@@ -269,15 +271,15 @@ kubectl apply -f multinet-vm6.yaml
 Once deployed, you can verify the BGP EVPN setup:
 
 ```bash
-# Check that spine pods are running
+# Check that EVPN pods are running
 kubectl get pods -n networking
 
-# Exec into a spine pod to check BGP status
-kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- vtysh -c "show bgp l2vpn evpn summary"
+# Exec into an EVPN pod to check BGP status
+kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- vtysh -c "show bgp l2vpn evpn summary"
 
 # Check VXLAN interface and bridge configuration
-kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- ip link show vxlan300
-kubectl exec -it ubuntu-spine-worker-1-<pod-id> -n networking -- brctl show br300
+kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- ip link show vxlan300
+kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- brctl show br300
 ```
 
 ### Testing EVPN Connectivity
@@ -294,10 +296,10 @@ Inside each VM, configure the bridge interface and test connectivity:
 
 ```bash
 # In both VMs, configure the bridge interface
-sudo dhclient eth1
+sudo dhclient
 
 # Check IP assignment
-ip addr show eth1
+ip a
 
 # Test connectivity between VMs (they should be able to ping each other)
 ping <other-vm-ip>
