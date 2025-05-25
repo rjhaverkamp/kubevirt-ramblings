@@ -39,7 +39,15 @@ spec:
             capabilities:
               add: ["NET_ADMIN", "SYS_ADMIN"]
             runAsUser: 0
+          volumeMounts:
+            - name: cni-bin
+              mountPath: /opt/cni/bin
+              readOnly: false
       restartPolicy: Always
       hostIPC: true
       hostNetwork: true
       hostPID: true
+      volumes:
+        - name: cni-bin
+          hostPath:
+            path: /opt/cni/bin

@@ -32,7 +32,7 @@ echo "KubeVirt installation complete!"
 
 # Install Multus CNI
 echo "Installing Multus CNI..."
-kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml
+kubectl apply -f multus-daemonset.yml
 
 echo "Waiting for Multus CNI to be ready..."
 kubectl rollout status -n kube-system daemonset/kube-multus-ds --timeout=180s

@@ -6,7 +6,7 @@ spec:
   config: '{
     "cniVersion": "0.3.0",
     "name": "bridge-network300",
-    "type": "bridge",
+    "type": "dbridge",
     "bridge": "br300",
     "ipam": {
       "type": "whereabouts",
