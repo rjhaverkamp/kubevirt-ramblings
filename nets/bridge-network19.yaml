@@ -1,0 +1,17 @@
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: bridge-network19
+spec:
+  config: '{
+    "cniVersion": "0.3.0",
+    "name": "bridge-network19",
+    "type": "bridge",
+    "bridge": "br19",
+    "ipam": {
+      "type": "whereabouts",
+      "range": "192.168.19.0/24",
+      "network_name": "bridge-network19",
+      "enable_overlapping_range": false
+    }
+  }'

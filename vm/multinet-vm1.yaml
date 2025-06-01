@@ -39,7 +39,7 @@ spec:
       volumes:
         - name: containerdisk
           containerDisk:
-            image: mcas/kubevirt-ubuntu-20.04:latest
+            image: ghcr.io/rjhaverkamp/ubuntu-2404:latest
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -47,3 +47,12 @@ spec:
               password: password
               chpasswd: { expire: False }
               ssh_pwauth: True
+              runcmd:
+                - sudo dhcpcd
+              network:
+                version: 2
+                ethernets:
+                  enp1s0:
+                    dhcp4: true
+                  enp2s0:
+                    dhcp4: true

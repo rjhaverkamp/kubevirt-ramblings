@@ -1,16 +1,16 @@
 apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
-  name: vm5
+  name: vm3
   namespace: default
 spec:
   running: true
   template:
     metadata:
       labels:
-        kubevirt.io/vm: vm5
+        kubevirt.io/vm: vm3
       annotations:
-        k8s.v1.cni.cncf.io/networks: bridge-network300
+        k8s.v1.cni.cncf.io/networks: bridge-network1
     spec:
       domain:
         devices:
@@ -35,11 +35,11 @@ spec:
           pod: {}
         - name: bridge-iface
           multus:
-            networkName: bridge-network300
+            networkName: bridge-network1
       volumes:
         - name: containerdisk
           containerDisk:
-            image: mcas/kubevirt-ubuntu-20.04:latest
+            image: ghcr.io/rjhaverkamp/ubuntu-2404:latest
         - name: cloudinitdisk
           cloudInitNoCloud:
             userData: |-
@@ -47,3 +47,12 @@ spec:
               password: password
               chpasswd: { expire: False }
               ssh_pwauth: True
+              runcmd:
+                - sudo dhcpcd
+              network:
+                version: 2
+                ethernets:
+                  enp1s0:
+                    dhcp4: true
+                  enp2s0:
+                    dhcp4: true

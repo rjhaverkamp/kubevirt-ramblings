@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: setup-vxlan-bridges-script
+  namespace: networking
+data:
+  setup-vxlan-bridges.sh: |
+    #!/bin/bash
+
+    # Script to create VXLAN and bridge networks for IDs 1-4096
+    # Usage: ./setup-vxlan-bridges.sh [start_id] [end_id] [local_ip]
+    #        ./setup-vxlan-bridges.sh --destroy [start_id] [end_id]
+
+    # Check for destroy mode
+    DESTROY_MODE=false
+    if [[ "$1" == "--destroy" ]]; then
+        DESTROY_MODE=true
+        START_ID=${2:-1}
+        END_ID=${3:-4096}
+    else
+        # Default values for create mode
+        START_ID=${1:-1}
+        END_ID=${2:-4096}
+        # Get IPv4 address from eth0 interface, fallback to provided argument or default
+        ETH0_IP=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1)
+        LOCAL_IP=${3:-${ETH0_IP:-10.5.0.3}}
+    fi
+    VXLAN_PORT=4789
+
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+       echo "This script must be run as root" 
+       exit 1
+    fi
+
+    # Check if required tools are available
+    for cmd in ip brctl; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Error: $cmd is not installed"
+            exit 1
+        fi
+    done
+
+    if [[ "$DESTROY_MODE" == "true" ]]; then
+        echo "DESTROY MODE: Removing VXLAN and bridge networks from ID $START_ID to $END_ID"
+        echo ""
+    else
+        # Validate LOCAL_IP for create mode
+        if [[ -z "$LOCAL_IP" ]]; then
+            echo "Error: Could not determine local IP address from eth0 and no IP provided"
+            echo "Usage: $0 [start_id] [end_id] [local_ip]"
+            echo "       $0 --destroy [start_id] [end_id]"
+            exit 1
+        fi
+
+        echo "Creating VXLAN and bridge networks from ID $START_ID to $END_ID"
+        echo "Using local IP: $LOCAL_IP $([ -n "$ETH0_IP" ] && echo "(detected from eth0)" || echo "(provided/default)")"
+        echo "Using VXLAN port: $VXLAN_PORT"
+        echo ""
+    fi
+
+    # Function to create VXLAN and bridge for a given ID
+    create_vxlan_bridge() {
+        local id=$1
+        local vxlan_name="vxlan$id"
+        local bridge_name="br$id"
+        
+        echo "Creating VXLAN and bridge for ID $id..."
+        
+        # Create VXLAN interface
+        ip link add $vxlan_name type vxlan id $id local $LOCAL_IP dstport $VXLAN_PORT nolearning
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Failed to create VXLAN $vxlan_name"
+            return 1
+        fi
+        
+        # Create bridge
+        brctl addbr $bridge_name
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Failed to create bridge $bridge_name"
+            # Clean up VXLAN if bridge creation fails
+            ip link del $vxlan_name 2>/dev/null
+            return 1
+        fi
+        
+        # Add VXLAN to bridge
+        brctl addif $bridge_name $vxlan_name
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Failed to add $vxlan_name to $bridge_name"
+            # Clean up on failure
+            brctl delbr $bridge_name 2>/dev/null
+            ip link del $vxlan_name 2>/dev/null
+            return 1
+        fi
+        
+        # Disable STP on bridge
+        brctl stp $bridge_name off
+        
+        # Bring up interfaces
+        ip link set up dev $bridge_name
+        ip link set up dev $vxlan_name
+        
+        if [[ $? -eq 0 ]]; then
+            echo "Successfully created and configured $vxlan_name and $bridge_name"
+        else
+            echo "Warning: Interfaces created but failed to bring up for ID $id"
+        fi
+    }
+
+    # Function to destroy VXLAN and bridge for a given ID
+    destroy_vxlan_bridge() {
+        local id=$1
+        local vxlan_name="vxlan$id"
+        local bridge_name="br$id"
+        local success=true
+        
+        echo "Destroying VXLAN and bridge for ID $id..."
+        
+        # Check if interfaces exist before attempting to delete
+        if ip link show $bridge_name &>/dev/null; then
+            # Bring down bridge interface
+            ip link set down dev $bridge_name 2>/dev/null
+            
+            # Remove bridge
+            brctl delbr $bridge_name 2>/dev/null
+            if [[ $? -ne 0 ]]; then
+                echo "Warning: Failed to delete bridge $bridge_name"
+                success=false
+            fi
+        fi
+        
+        if ip link show $vxlan_name &>/dev/null; then
+            # Bring down VXLAN interface
+            ip link set down dev $vxlan_name 2>/dev/null
+            
+            # Remove VXLAN interface
+            ip link del $vxlan_name 2>/dev/null
+            if [[ $? -ne 0 ]]; then
+                echo "Warning: Failed to delete VXLAN $vxlan_name"
+                success=false
+            fi
+        fi
+        
+        if [[ "$success" == "true" ]]; then
+            echo "Successfully destroyed $vxlan_name and $bridge_name"
+        else
+            echo "Some interfaces for ID $id could not be removed"
+            return 1
+        fi
+    }
+
+    # Function to cleanup on interrupt
+    cleanup() {
+        echo ""
+        echo "Script interrupted. You may need to manually clean up any partially created interfaces."
+        exit 1
+    }
+
+    # Set up signal handlers
+    trap cleanup SIGINT SIGTERM
+
+    # Main loop
+    success_count=0
+    failure_count=0
+
+    for id in $(seq $START_ID $END_ID); do
+        if [[ "$DESTROY_MODE" == "true" ]]; then
+            destroy_vxlan_bridge $id
+        else
+            create_vxlan_bridge $id
+        fi
+        
+        if [[ $? -eq 0 ]]; then
+            ((success_count++))
+        else
+            ((failure_count++))
+        fi
+        
+        # Progress indicator every 100 iterations
+        if [[ $((id % 100)) -eq 0 ]]; then
+            echo "Progress: $id/$END_ID completed"
+        fi
+    done
+
+    echo ""
+    echo "Script completed!"
+    if [[ "$DESTROY_MODE" == "true" ]]; then
+        echo "Successfully destroyed: $success_count interface pairs"
+        echo "Failed to destroy: $failure_count interface pairs"
+    else
+        echo "Successfully created: $success_count interface pairs"
+        echo "Failed to create: $failure_count interface pairs"
+    fi
+
+    if [[ $failure_count -gt 0 ]]; then
+        echo ""
+        if [[ "$DESTROY_MODE" == "true" ]]; then
+            echo "Some interfaces could not be removed. You may need to manually clean them up:"
+            echo "  ip link del <vxlan_name>  # for VXLAN interfaces"
+            echo "  brctl delbr <bridge_name> # for bridge interfaces"
+        else
+            echo "To clean up failed or unwanted interfaces, you can use:"
+            echo "  $0 --destroy [start_id] [end_id]  # to destroy a range"
+            echo "  ip link del <vxlan_name>  # for individual VXLAN interfaces"
+            echo "  brctl delbr <bridge_name> # for individual bridge interfaces"
+        fi
+        exit 1
+    fi

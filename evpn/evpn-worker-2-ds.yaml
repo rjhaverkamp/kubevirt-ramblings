@@ -1,63 +1,55 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: networking
-  labels:
-    pod-security.kubernetes.io/enforce: privileged
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: frr-config-control-1
+  name: frr-config-worker-2
   namespace: networking
 data:
   frr.conf: |
-    hostname evpn-control-1
-    router bgp 65000
-     bgp router-id 10.5.0.2
+    hostname evpn-worker-2
+    router bgp 65002
+     bgp router-id 10.5.0.4
      bgp log-neighbor-changes
      bgp default l2vpn-evpn
      no bgp ebgp-requires-policy
-     neighbor 10.5.0.3 remote-as 65001
-     neighbor 10.5.0.4 remote-as 65002
+     neighbor 10.5.0.2 remote-as 65000
      address-family ipv4 unicast
       redistribute connected
      exit-address-family
      !
      address-family l2vpn evpn
-      neighbor 10.5.0.3 activate
-      neighbor 10.5.0.4 activate
+      neighbor 10.5.0.2 activate
       advertise-all-vni
      exit-address-family
-    exit
-    !
+     exit
+     !
+
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: ubuntu-evpn-control-1
+  name: ubuntu-evpn-worker-2
   namespace: networking
   labels:
-    app: ubuntu-evpn-control-1
+    app: ubuntu-evpn-worker-2
 spec:
   selector:
     matchLabels:
-      app: ubuntu-evpn-control-1
+      app: ubuntu-evpn-worker-2
   template:
     metadata:
       labels:
-        app: ubuntu-evpn-control-1
+        app: ubuntu-evpn-worker-2
     spec:
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
       nodeSelector:
-        kubernetes.io/hostname: "talos-default-controlplane-1"
+        kubernetes.io/hostname: "talos-default-worker-2"
       volumes:
         - name: frr-config
           configMap:
-            name: frr-config-control-1
+            name: frr-config-worker-2
+        - name: vxlan-script
+          configMap:
+            name: setup-vxlan-bridges-script
+            defaultMode: 0755
       containers:
         - name: ubuntu
           image: ubuntu
@@ -65,19 +57,25 @@ spec:
             - name: frr-config
               mountPath: /root/frr.conf
               subPath: frr.conf
+            - name: vxlan-script
+              mountPath: /root/setup-vxlan-bridges.sh
+              subPath: setup-vxlan-bridges.sh
           command:
             - "/bin/bash"
             - "-c"
             - |
               apt-get update
-              apt-get install -y iproute2 frr iputils-ping bridge-utils
+              apt-get install -y iproute2 bridge-utils iputils-ping net-tools traceroute tcpdump curl wget dnsutils nftables iptables frr frr-pythontools
               echo "Network tools and FRR installed."
 
               # Enable FRR daemons
               sed -i 's/^bgpd=no/bgpd=yes/' /etc/frr/daemons
               sed -i 's/^ospfd=no/ospfd=yes/' /etc/frr/daemons
               sed -i 's/^zebra=no/zebra=yes/' /etc/frr/daemons
+
+              # Set proper permissions for FRR config
               cp /root/frr.conf /etc/frr/frr.conf
+
               # Start FRR service
               echo "Starting FRR..."
               /usr/lib/frr/frrinit.sh start
@@ -86,7 +84,14 @@ spec:
               sleep 5
               /usr/lib/frr/frrinit.sh status
 
-              echo "FRR started successfully. Container will sleep now..."
+              echo "FRR started successfully. Setting up VXLAN bridges..."
+
+              # Execute the VXLAN bridge setup script
+              chmod +x /root/setup-vxlan-bridges.sh
+              /root/setup-vxlan-bridges.sh --destroy 1 200
+              /root/setup-vxlan-bridges.sh 10 20
+
+              echo "VXLAN bridge setup completed. Container will sleep now..."
               sleep infinity
           imagePullPolicy: IfNotPresent
           securityContext:
