@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvirtos2
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kvirtos2
+rules:
+- apiGroups: ["kubevirt.io"]
+  resources: ["virtualmachines", "virtualmachineinstances"]
+  verbs: ["get", "list", "create", "update", "patch", "delete", "watch"]
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "events", "configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kvirtos2
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kvirtos2
+subjects:
+- kind: ServiceAccount
+  name: kvirtos2
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kvirtos2
+  namespace: default
+  labels:
+    app: kvirtos2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kvirtos2
+  template:
+    metadata:
+      labels:
+        app: kvirtos2
+    spec:
+      serviceAccountName: kvirtos2
+      containers:
+      - name: kvirtos2
+        image: ghcr.io/rjhaverkamp/dbridge:kvirtos2-latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command: ["./kvirtos2"]
+        args:
+        - --namespace=$(NAMESPACE)
+        - --port=8080
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvirtos2
+  namespace: default
+  labels:
+    app: kvirtos2
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: kvirtos2
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kvirtos2
+  namespace: default
+  labels:
+    app: kvirtos2
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: kvirtos2.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kvirtos2
+            port:
+              number: 8080

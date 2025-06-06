@@ -2,7 +2,14 @@
 
 This comprehensive guide covers everything you need to set up a Talos OS cluster using Docker, install KubeVirt and Multus CNI, and deploy virtual machines with multiple network interfaces. Multus CNI will handle the bridge creation automatically through network attachment definitions.
 
-We will also add 2 vxlans, that will allow our multi-tenant virtual machines to communicate with each other. Even when they have overlapping address ranges.
+We will also add VXLANs that will allow our multi-tenant virtual machines to communicate with each other. Even when they have overlapping address ranges.
+
+The project files are organized into directories:
+- `evpn/` - BGP EVPN routing configurations
+- `nets/` - Network attachment definitions (bridge-network10 through bridge-network20)
+- `vm/` - Virtual machine definitions (multinet-vm1 through multinet-vm6)
+- `install-kubevirt.sh` - Installation script
+- `Ubuntuimage` - Container image definition
 
 ## Table of Contents
 - [Prerequisites](#prerequisites)
@@ -152,9 +159,11 @@ We'll create two different NetworkAttachmentDefinitions to demonstrate the Where
 To deploy the network attachment definitions, run the following commands:
 
 ```bash
-kubectl apply -f bridge-network.yaml
-kubectl apply -f bridge-network2.yaml
+kubectl apply -f nets/bridge-network10.yaml
+kubectl apply -f nets/bridge-network11.yaml
 ```
+
+**Note:** The current VM configurations reference `bridge-network1`, `bridge-network2`, etc., but the actual network files are named `bridge-network10.yaml`, `bridge-network11.yaml`, etc. You may need to update the VM files to match the correct network names, or create the missing bridge network files.
 
 Verify the network attachment definition:
 
@@ -167,14 +176,16 @@ When these NetworkAttachmentDefinitions are applied, Multus CNI will automatical
 
 ## Step 5: Create and Deploy VMs
 
-We will create 2 virtual machines, this is done by applying the following yaml files:
+We will create virtual machines, this is done by applying the following yaml files:
 
 ```bash
-kubectl apply -f multinet-vm1.yaml
-kubectl apply -f multinet-vm2.yaml
-kubectl apply -f multinet-vm3.yaml
-kubectl apply -f multinet-vm4.yaml
+kubectl apply -f vm/multinet-vm1.yaml
+kubectl apply -f vm/multinet-vm2.yaml
+kubectl apply -f vm/multinet-vm3.yaml
+kubectl apply -f vm/multinet-vm4.yaml
 ```
+
+**Note:** Make sure the network attachment definitions referenced in the VM files exist. The VMs currently reference networks like `bridge-network1`, `bridge-network2`, etc.
 
 Monitor VM creation:
 
@@ -196,23 +207,24 @@ and run `sudo dhclient`.
 
 ## Step 6: VXLAN Setup
 
-Deploy the `netadmin-ds.yaml` tooling:
+Deploy the networking namespace and tooling:
 
 ```bash
-kubectl apply -f netadmin-ds.yaml
+kubectl apply -f evpn/namespace.yaml
+kubectl apply -f evpn/setup-vxlan-bridges-configmap.yaml
 ```
 
-Now exec into the pods on each host:
+Now exec into the networking pods on each host (after deploying the EVPN infrastructure):
 
 ```bash
-kubectl exec -it ubuntu-netadmin-<pod-id> -n debug-tools -- /bin/bash
+kubectl exec -it <networking-pod-name> -n networking -- /bin/bash
 ```
 
 and run the following commands:
 
 ```bash
-ip link add vxlan100 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan100 up ; ip link set vxlan100 master br1
-ip link add vxlan200 type vxlan id 200 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan200 up ; ip link set vxlan200 master br2
+ip link add vxlan10 type vxlan id 10 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan10 up ; ip link set vxlan10 master br10
+ip link add vxlan11 type vxlan id 11 group 239.1.1.1 dev eth0 dstport 4789 ; ip link set vxlan11 up ; ip link set vxlan11 master br11
 ```
 
 ### Tenant Configuration
@@ -221,10 +233,10 @@ The following table shows the multi-tenant setup with VMs and their network conf
 
 | Tenant | VMs | Subnet | VXLAN ID | Bridge | Node Placement |
 |--------|-----|--------|----------|--------|----------------|
-| Tenant 1 | vm1, vm3 | 192.168.1.0/24 | vxlan100 | br1 | Anti-affinity between VMs |
-| Tenant 2 | vm2, vm4 | 192.168.1.0/24 | vxlan200 | br2 | Anti-affinity between VMs |
+| Tenant 1 | vm1, vm3 | 192.168.10.0/24 | vxlan10 | br10 | Anti-affinity between VMs |
+| Tenant 2 | vm2, vm4 | 192.168.11.0/24 | vxlan11 | br11 | Anti-affinity between VMs |
 
-This configuration demonstrates how multiple tenants can use the same IP address range (192.168.1.0/24) without conflicts by isolating their traffic through separate VXLAN networks. The VMs are placed on different nodes using anti-affinity rules to ensure high availability.
+This configuration demonstrates how multiple tenants can use overlapping IP address ranges without conflicts by isolating their traffic through separate VXLAN networks. The available network configurations include bridge networks 10-20, each with their own subnet ranges. The VMs are placed on different nodes using anti-affinity rules to ensure high availability.
 
 ## Step 7: Advanced VXLAN over EVPN with BGP
 
@@ -235,9 +247,9 @@ For more advanced networking scenarios, we can deploy BGP EVPN routers on each w
 First, deploy the BGP EVPN configurations on both worker nodes:
 
 ```bash
-kubectl apply -f evpn-control-1-ds.yaml
-kubectl apply -f evpn-worker-1-ds.yaml
-kubectl apply -f evpn-worker-2-ds.yaml
+kubectl apply -f evpn/evpn-control-1-ds.yaml
+kubectl apply -f evpn/evpn-worker-1-ds.yaml
+kubectl apply -f evpn/evpn-worker-2-ds.yaml
 ```
 
 These deployments will:
@@ -249,21 +261,25 @@ These deployments will:
 
 ### Create Advanced Network Attachment
 
-Deploy the bridge network for VXLAN 300:
+Deploy additional bridge networks as needed (networks 10-20 are available):
 
 ```bash
-kubectl apply -f bridge-network300.yaml
+# Deploy additional networks from the nets/ directory
+kubectl apply -f nets/bridge-network12.yaml
+kubectl apply -f nets/bridge-network13.yaml
+kubectl apply -f nets/bridge-network14.yaml
+# ... apply other networks as needed (up to bridge-network20.yaml)
 ```
 
-This creates a NetworkAttachmentDefinition that uses the `br300` bridge created by the spine routers.
+These create NetworkAttachmentDefinitions with different subnet ranges. Each network uses its own bridge (br10, br11, br12, etc.) and subnet (192.168.10.0/24, 192.168.11.0/24, etc.).
 
 ### Deploy VMs with EVPN Connectivity
 
 Create VMs that will use the EVPN-enabled network:
 
 ```bash
-kubectl apply -f multinet-vm5.yaml
-kubectl apply -f multinet-vm6.yaml
+kubectl apply -f vm/multinet-vm5.yaml
+kubectl apply -f vm/multinet-vm6.yaml
 ```
 
 ### Verify EVPN Configuration
@@ -278,8 +294,8 @@ kubectl get pods -n networking
 kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- vtysh -c "show bgp l2vpn evpn summary"
 
 # Check VXLAN interface and bridge configuration
-kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- ip link show vxlan300
-kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- brctl show br300
+kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- ip link show
+kubectl exec -it ubuntu-evpn-worker-1-<pod-id> -n networking -- brctl show
 ```
 
 ### Testing EVPN Connectivity
@@ -311,9 +327,67 @@ The EVPN setup provides:
 - Layer 2 connectivity across nodes with Layer 3 underlay
 - BGP-based control plane for network advertisements
 
+## File Structure
+
+The project is now organized into the following directories:
+
+- `evpn/` - Contains EVPN and BGP routing configurations
+  - `namespace.yaml` - Networking namespace for BGP/EVPN pods
+  - `evpn-control-1-ds.yaml` - Control plane BGP router
+  - `evpn-worker-1-ds.yaml` - Worker 1 BGP router
+  - `evpn-worker-2-ds.yaml` - Worker 2 BGP router
+  - `setup-vxlan-bridges-configmap.yaml` - VXLAN bridge setup configuration
+- `nets/` - Network attachment definitions
+  - `bridge-network10.yaml` through `bridge-network20.yaml` - Various bridge networks with different subnets
+- `vm/` - Virtual machine definitions
+  - `multinet-vm1.yaml` through `multinet-vm6.yaml` - VM configurations with multiple network interfaces
+- `install-kubevirt.sh` - Installation script for KubeVirt, Multus, and Whereabouts
+- `Ubuntuimage` - Container image definition for Ubuntu VMs
+
 ## Troubleshooting
 
-???
+### Network Naming Mismatch
+
+If you encounter issues with VMs not starting or network interfaces not being created, check for network naming mismatches:
+
+1. **Check VM network references:**
+```bash
+# Check what networks the VMs are trying to use
+kubectl get vm vm1 -o yaml | grep -A 5 "k8s.v1.cni.cncf.io/networks"
+```
+
+2. **List available NetworkAttachmentDefinitions:**
+```bash
+kubectl get network-attachment-definitions
+```
+
+3. **Fix the mismatch by either:**
+   - Creating missing network definitions (e.g., if VMs reference `bridge-network1` but only `bridge-network10` exists)
+   - Updating VM configurations to use existing networks
+
+4. **Create missing bridge networks:**
+```bash
+# Example: Create bridge-network1 if VMs reference it
+cat <<EOF | kubectl apply -f -
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: bridge-network1
+spec:
+  config: '{
+    "cniVersion": "0.3.0",
+    "name": "bridge-network1",
+    "type": "bridge",
+    "bridge": "br1",
+    "ipam": {
+      "type": "whereabouts",
+      "range": "192.168.1.0/24",
+      "network_name": "bridge-network1",
+      "enable_overlapping_range": false
+    }
+  }'
+EOF
+```
 
 ### KubeVirt Issues
 
@@ -391,7 +465,29 @@ ip addr show
 To delete the VMs:
 
 ```bash
-kubectl delete vm vm1
+# Delete individual VMs
+kubectl delete vm vm1 vm2 vm3 vm4 vm5 vm6
+
+# Or delete all VMs from the vm/ directory
+kubectl delete -f vm/
+```
+
+To remove network configurations:
+
+```bash
+# Remove specific network attachments
+kubectl delete -f nets/bridge-network10.yaml
+kubectl delete -f nets/bridge-network11.yaml
+
+# Or remove all network attachments
+kubectl delete -f nets/
+```
+
+To remove EVPN/BGP infrastructure:
+
+```bash
+# Remove EVPN components
+kubectl delete -f evpn/
 ```
 
 To remove KubeVirt, Multus, and Whereabouts:
@@ -407,8 +503,6 @@ kubectl delete -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-
 kubectl delete -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/daemonset-install.yaml
 kubectl delete -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/whereabouts.cni.cncf.io_ippools.yaml
 kubectl delete -f https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/master/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml
-
-
 ```
 
 To destroy the Talos cluster:
