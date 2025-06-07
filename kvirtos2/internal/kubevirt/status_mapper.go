@@ -5,7 +5,7 @@ import (
 	"github.com/kubevirt/kvirtos2/internal/models"
 )
 
-// StatusMapper handles the mapping between KubeVirt VM states and Nova API states
+// StatusMapper handles the mapping between KubeVirt VM states and internal VM states
 type StatusMapper struct{}
 
 // NewStatusMapper creates a new StatusMapper instance
@@ -13,109 +13,56 @@ func NewStatusMapper() *StatusMapper {
 	return &StatusMapper{}
 }
 
-// GetVMStatus determines the Nova API status based on VM and VMI state
-func (s *StatusMapper) GetVMStatus(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) string {
+// GetInternalVMStatus determines the internal VM status based on VM and VMI state
+func (s *StatusMapper) GetInternalVMStatus(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) string {
 	running, _, _ := unstructured.NestedBool(vm.Object, "spec", "running")
 	if !running {
-		return models.StatusShutoff
+		return models.InternalStatusStopped
 	}
 
 	if vmi == nil {
-		return models.StatusBuild
+		return models.InternalStatusStarting
 	}
 
 	phase, found, _ := unstructured.NestedString(vmi.Object, "status", "phase")
 	if !found {
-		return models.StatusBuild
+		return models.InternalStatusStarting
 	}
 
-	return s.mapPhaseToStatus(phase)
+	return s.mapPhaseToInternalStatus(phase)
 }
 
-// GetPowerState determines the Nova API power state based on VM and VMI state
-func (s *StatusMapper) GetPowerState(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) int {
-	running, _, _ := unstructured.NestedBool(vm.Object, "spec", "running")
-	if !running {
-		return models.PowerStateShutdown
-	}
 
-	if vmi == nil {
-		return models.PowerStateNoState
-	}
 
-	phase, found, _ := unstructured.NestedString(vmi.Object, "status", "phase")
-	if !found {
-		return models.PowerStateNoState
-	}
-
-	return s.mapPhaseToPowerState(phase)
-}
-
-// GetVMState determines the Nova API VM state based on the status
-func (s *StatusMapper) GetVMState(status string) string {
-	stateMap := map[string]string{
-		models.StatusActive:   models.VMStateActive,
-		models.StatusBuild:    models.VMStateBuilding,
-		models.StatusShutoff:  models.VMStateStopped,
-		models.StatusError:    models.VMStateError,
-		models.StatusDeleted:  models.VMStateDeleted,
-		models.StatusPaused:   models.VMStatePaused,
-		models.StatusSuspended: models.VMStateSuspended,
-	}
-
-	if state, exists := stateMap[status]; exists {
-		return state
-	}
-	return models.VMStateActive // default fallback
-}
-
-// mapPhaseToStatus maps KubeVirt VMI phase to Nova API status
-func (s *StatusMapper) mapPhaseToStatus(phase string) string {
+// mapPhaseToInternalStatus maps KubeVirt VMI phase to internal status
+func (s *StatusMapper) mapPhaseToInternalStatus(phase string) string {
 	statusMap := map[string]string{
-		VMStateRunning:    models.StatusActive,
-		VMStatePending:    models.StatusBuild,
-		VMStateScheduling: models.StatusBuild,
-		VMStateScheduled:  models.StatusBuild,
-		VMStateFailed:     models.StatusError,
-		VMStateSucceeded:  models.StatusShutoff,
+		VMStateRunning:    models.InternalStatusRunning,
+		VMStatePending:    models.InternalStatusStarting,
+		VMStateScheduling: models.InternalStatusStarting,
+		VMStateScheduled:  models.InternalStatusStarting,
+		VMStateFailed:     models.InternalStatusError,
+		VMStateSucceeded:  models.InternalStatusStopped,
 	}
 
 	if status, exists := statusMap[phase]; exists {
 		return status
 	}
-	return models.StatusUnknown
+	return models.InternalStatusUnknown
 }
 
-// mapPhaseToPowerState maps KubeVirt VMI phase to Nova API power state
-func (s *StatusMapper) mapPhaseToPowerState(phase string) int {
-	powerStateMap := map[string]int{
-		VMStateRunning:    models.PowerStateRunning,
-		VMStatePending:    models.PowerStateNoState,
-		VMStateScheduling: models.PowerStateNoState,
-		VMStateScheduled:  models.PowerStateNoState,
-		VMStateFailed:     models.PowerStateCrashed,
-		VMStateSucceeded:  models.PowerStateShutdown,
-	}
-
-	if powerState, exists := powerStateMap[phase]; exists {
-		return powerState
-	}
-	return models.PowerStateNoState
-}
-
-// IsVMReady checks if the VM is in a ready state
+// IsVMReady checks if the VM is in a ready state using internal status
 func (s *StatusMapper) IsVMReady(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) bool {
-	status := s.GetVMStatus(vm, vmi)
-	return status == models.StatusActive
+	status := s.GetInternalVMStatus(vm, vmi)
+	return status == models.InternalStatusRunning
 }
 
 // IsVMTransitioning checks if the VM is in a transitioning state
 func (s *StatusMapper) IsVMTransitioning(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) bool {
-	status := s.GetVMStatus(vm, vmi)
+	status := s.GetInternalVMStatus(vm, vmi)
 	transitioningStates := []string{
-		models.StatusBuild,
-		models.StatusReboot,
-		models.StatusHardReboot,
+		models.InternalStatusStarting,
+		models.InternalStatusStopping,
 	}
 
 	for _, state := range transitioningStates {
@@ -128,8 +75,8 @@ func (s *StatusMapper) IsVMTransitioning(vm *unstructured.Unstructured, vmi *uns
 
 // IsVMError checks if the VM is in an error state
 func (s *StatusMapper) IsVMError(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) bool {
-	status := s.GetVMStatus(vm, vmi)
-	return status == models.StatusError
+	status := s.GetInternalVMStatus(vm, vmi)
+	return status == models.InternalStatusError
 }
 
 // GetStatusReason provides additional context for the VM status

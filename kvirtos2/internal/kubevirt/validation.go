@@ -14,16 +14,16 @@ var (
 )
 
 // validateCreateRequest validates the VM creation request
-func validateCreateRequest(req models.CreateServerParams) error {
+func validateCreateRequest(req models.CreateVMParams) error {
 	if err := validateVMName(req.Name); err != nil {
 		return err
 	}
 
-	if err := validateImageRef(req.ImageRef); err != nil {
+	if err := validateImageRef(req.Image); err != nil {
 		return err
 	}
 
-	if err := validateFlavorRef(req.FlavorRef); err != nil {
+	if err := validateFlavorRef(req.Flavor); err != nil {
 		return err
 	}
 

@@ -1,60 +1,71 @@
 # kvirtos2
 
-The goal of kvirtos2 is to provide a lightweight, easy-to-use, and flexible virtualization solution for Kubernetes clusters. It is essentially a REST API that allows users to create and manage virtual machines (VMs) on their Kubernetes clusters using a simple and intuitive interface.
+A lightweight, Kubernetes-native REST API for managing virtual machines using KubeVirt. kvirtos2 provides a simple and intuitive interface for VM lifecycle management while leveraging native Kubernetes resources.
 
-VMs are created using a REST API that is compatible with OpenStack Nova, and in the backend translates those requests into Kubernetes resources using KubeVirt.
+## Overview
+
+kvirtos2 eliminates the complexity of traditional cloud APIs by providing a clean, RESTful interface for VM management on Kubernetes clusters. It translates simple HTTP requests into native Kubernetes resources using KubeVirt, making VM management as easy as managing any other Kubernetes workload.
 
 ## Features
 
-The implementation contains the following features:
-
-- ✅ Create VMs
-- ✅ Delete VMs
-- ✅ List VMs
-- ✅ Start VMs
-- ✅ Stop VMs
-- ✅ Get VM details
-- ✅ Reboot VMs
-- ✅ OpenStack Nova API compatibility
-- ✅ Default pod networking
-- ✅ Metadata support
-
-When creating a VM it always gets a default network like this in KubeVirt:
-
-```yaml
-networks:
-  - name: default
-    pod: {}
-```
-
-Extra networks can be implemented in a later phase.
+- ✅ **VM Lifecycle Management**: Create, start, stop, restart, and delete VMs
+- ✅ **Kubernetes-Native**: Uses VM names (not UUIDs) as identifiers
+- ✅ **RESTful API**: Clean HTTP verbs and resource-based URLs
+- ✅ **Metadata Support**: Key-value labels for VM organization
+- ✅ **Resource Management**: Predefined flavors with CPU/memory allocation
+- ✅ **Multiple Images**: Support for Ubuntu, Fedora, and CirrOS images
+- ✅ **Default Networking**: Automatic pod network configuration
+- ✅ **Health Monitoring**: Built-in health check endpoints
+- ✅ **Container Ready**: Docker image with Kubernetes deployment manifests
 
 ## Architecture
 
-kvirtos2 is built using:
+### Technology Stack
+- **Language**: Go 1.21+
+- **Web Framework**: Gin HTTP framework
+- **Kubernetes Integration**: Dynamic client (k8s.io/client-go)
+- **Container Runtime**: Docker with multi-stage builds
+- **API Design**: Clean v1 REST API (no legacy compatibility)
 
-- **Go** with the Gin web framework
-- **Kubernetes API clients** for cluster interaction
-- **KubeVirt API clients** for VM management
-- **OpenStack Nova API compatibility** for familiar interface
+### Project Structure
+```
+kvirtos2/
+├── main.go                    # Application entry point
+├── go.mod                     # Go module dependencies
+├── internal/
+│   ├── handlers/              # HTTP request handlers
+│   │   └── v1.go             # V1 API endpoints
+│   ├── kubevirt/             # KubeVirt client components
+│   │   ├── client.go         # Main orchestration client
+│   │   ├── vm_builder.go     # VM specification builder
+│   │   ├── status_mapper.go  # VM status mapping
+│   │   ├── config.go         # Flavors and images
+│   │   └── *.go              # Other focused components
+│   └── models/               # Data models
+│       ├── v1.go             # V1 API models
+│       └── nova.go           # Legacy models (compatibility)
+├── Dockerfile                # Multi-stage container build
+├── deploy.yaml              # Kubernetes deployment manifests
+└── Makefile                 # Build and deployment automation
+```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Kubernetes cluster with KubeVirt installed
-- `kubectl` configured to access the cluster
+- Kubernetes cluster with KubeVirt installed and configured
+- `kubectl` configured to access your cluster
 - Go 1.21+ (for local development)
 - Docker (for containerized deployment)
 
 ### Local Development
 
 ```bash
-# Clone and setup
-git clone <repository>
+# Clone the repository
+git clone <repository-url>
 cd kvirtos2
 
-# Download dependencies
+# Install dependencies
 go mod tidy
 
 # Run locally (requires kubeconfig)
@@ -74,98 +85,151 @@ make deploy
 make port-forward
 ```
 
-## API Usage
-
-### Create a VM
+### Quick Test
 
 ```bash
-curl -X POST http://localhost:8080/v2.1/servers \
+# Check API health
+curl http://localhost:8080/health
+
+# Create a VM
+curl -X POST http://localhost:8080/api/v1/vms \
   -H "Content-Type: application/json" \
   -d '{
-    "server": {
-      "name": "test-vm",
-      "imageRef": "fedora-cloud",
-      "flavorRef": "m1.small",
-      "metadata": {
-        "purpose": "testing"
-      }
-    }
+    "name": "test-vm",
+    "image": "ubuntu-24",
+    "flavor": "m1.small",
+    "autoStart": true
   }'
+
+# List VMs
+curl http://localhost:8080/api/v1/vms
+
+# Check VM status
+curl http://localhost:8080/api/v1/vms/test-vm
 ```
 
-### List VMs
+## API Overview
 
-```bash
-curl http://localhost:8080/v2.1/servers
+### Base URL
+```
+http://localhost:8080/api/v1
 ```
 
-### Start a VM
+### Core Endpoints
+- `GET /health` - API health check
+- `POST /api/v1/vms` - Create VM
+- `GET /api/v1/vms` - List VMs
+- `GET /api/v1/vms/{name}` - Get VM details
+- `PUT /api/v1/vms/{name}` - Update VM metadata
+- `DELETE /api/v1/vms/{name}` - Delete VM
+- `POST /api/v1/vms/{name}/start` - Start VM
+- `POST /api/v1/vms/{name}/stop` - Stop VM
+- `POST /api/v1/vms/{name}/restart` - Restart VM
+
+### Example: Create and Manage VM
 
 ```bash
-curl -X POST http://localhost:8080/v2.1/servers/{vm-id}/action \
+# Create VM with metadata
+curl -X POST http://localhost:8080/api/v1/vms \
   -H "Content-Type: application/json" \
-  -d '{"os-start": null}'
-```
+  -d '{
+    "name": "web-server",
+    "image": "ubuntu-24",
+    "flavor": "m1.medium",
+    "metadata": {
+      "environment": "production",
+      "team": "platform"
+    },
+    "autoStart": false
+  }'
 
-### Stop a VM
+# Start the VM
+curl -X POST http://localhost:8080/api/v1/vms/web-server/start
 
-```bash
-curl -X POST http://localhost:8080/v2.1/servers/{vm-id}/action \
+# Check status
+curl http://localhost:8080/api/v1/vms/web-server
+
+# Update metadata
+curl -X PUT http://localhost:8080/api/v1/vms/web-server \
   -H "Content-Type: application/json" \
-  -d '{"os-stop": null}'
-```
+  -d '{"metadata": {"version": "1.2.0"}}'
 
-### Delete a VM
-
-```bash
-curl -X DELETE http://localhost:8080/v2.1/servers/{vm-id}
+# Stop and delete
+curl -X POST http://localhost:8080/api/v1/vms/web-server/stop
+curl -X DELETE http://localhost:8080/api/v1/vms/web-server
 ```
 
 ## Available Resources
 
-### Flavors
-
+### Flavors (CPU/Memory)
 - `m1.tiny`: 0.5 CPU, 512MB RAM
-- `m1.small`: 1 CPU, 2GB RAM  
+- `m1.small`: 1 CPU, 2GB RAM
 - `m1.medium`: 2 CPU, 4GB RAM
 - `m1.large`: 4 CPU, 8GB RAM
 
 ### Images
-
-- `ubuntu-20.04`: Ubuntu 20.04 container disk
-- `fedora-cloud`: Fedora Cloud container disk
-- `cirros`: CirrOS test image
+- `ubuntu-24`: Ubuntu 24.04 LTS
+- `ubuntu-20.04`: Ubuntu 20.04 LTS
+- `fedora-cloud`: Fedora Cloud Image
+- `cirros`: CirrOS Test Image
 
 ## Configuration
 
-Environment variables:
-
+### Environment Variables
 - `KUBECONFIG`: Path to kubeconfig file (optional, uses in-cluster config if not provided)
 - `NAMESPACE`: Kubernetes namespace to operate in (default: "default")
 - `PORT`: Port to listen on (default: "8080")
 
-Command line flags:
+### Command Line Flags
+```bash
+./kvirtos2 --kubeconfig /path/to/config --namespace kube-system --port 8080
+```
+
+## Deployment
+
+### Kubernetes Deployment
+
+The included `deploy.yaml` provides:
+- Deployment with proper resource limits
+- Service for cluster access
+- ServiceAccount with minimal RBAC permissions
+- ConfigMap for configuration
 
 ```bash
-./kvirtos2 --kubeconfig /path/to/config --namespace default --port 8080
+# Deploy to cluster
+kubectl apply -f deploy.yaml
+
+# Check deployment
+kubectl get pods -l app=kvirtos2
+
+# Access via port-forward
+kubectl port-forward svc/kvirtos2 8080:8080
 ```
+
+### Docker Image
+
+Multi-stage Dockerfile optimized for:
+- Minimal runtime image size
+- Security (non-root user)
+- Efficient layer caching
+- Static binary compilation
+
+## Networking
+
+All VMs automatically receive default pod networking:
+```yaml
+networks:
+  - name: default
+    pod: {}
+```
+
+This provides:
+- Cluster-internal IP address
+- Access to cluster services
+- Network policies compatibility
+- Simple, predictable networking
 
 ## Development
-
-### Project Structure
-
-```
-kvirtos2/
-├── main.go                 # Application entry point
-├── internal/
-│   ├── handlers/           # HTTP request handlers
-│   ├── kubevirt/          # KubeVirt client wrapper
-│   └── models/            # Data models
-├── deploy.yaml            # Kubernetes deployment manifests
-├── Dockerfile             # Container build definition
-├── Makefile              # Build and deployment tasks
-└── examples.md           # Usage examples
-```
 
 ### Building
 
@@ -176,41 +240,96 @@ make build
 # Docker image
 make docker-build
 
-# Deploy to cluster
-make deploy
+# Run tests
+make test
 ```
 
 ### Testing
 
+The project includes comprehensive test coverage:
+- Model validation tests
+- Handler unit tests
+- Integration test examples
+- Mock client for testing
+
 ```bash
-# Run tests
-make test
+# Run all tests
+go test ./...
 
-# Check deployment
-make status
-
-# View logs
-make logs
+# Run specific test suites
+go test ./internal/models/...
+go test ./internal/handlers/...
 ```
 
-## OpenStack Nova Compatibility
+### Code Organization
 
-kvirtos2 implements a subset of the OpenStack Nova API for maximum compatibility:
+The codebase follows clean architecture principles:
+- **Handlers**: HTTP request/response handling
+- **Models**: Data structures and validation
+- **KubeVirt Client**: Kubernetes resource management
+- **Interfaces**: Testable contracts between components
 
-- `POST /v2.1/servers` - Create server
-- `GET /v2.1/servers` - List servers  
-- `GET /v2.1/servers/{id}` - Show server details
-- `DELETE /v2.1/servers/{id}` - Delete server
-- `POST /v2.1/servers/{id}/action` - Server actions (start, stop, reboot)
+## Security & RBAC
+
+The deployment includes minimal required permissions:
+- VirtualMachine resource management
+- VirtualMachineInstance read access
+- Event and status updates
+- No cluster-admin privileges required
+
+## Monitoring
+
+Built-in observability features:
+- Health check endpoint (`/health`)
+- Structured JSON logging
+- HTTP request logging
+- Error tracking and reporting
+
+## Future Roadmap
+
+### Phase 2: Enhanced Features
+- Multiple network attachments
+- Volume management (PVCs, ConfigMaps)
+- VM console access
+- Resource quotas and limits
+
+### Phase 3: Advanced Operations  
+- VM migration support
+- Backup and restore
+- Advanced networking (SR-IOV, bridge)
+- Multi-tenancy support
+
+### Phase 4: Enterprise Features
+- Authentication and authorization
+- API rate limiting
+- Metrics and monitoring integration
+- Webhook support for external integrations
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+- Follow Go best practices and formatting
+- Add tests for new functionality
+- Update documentation for API changes
+- Ensure Docker builds succeed
+- Test with a real KubeVirt cluster
 
 ## License
 
-This project is licensed under the Apache License 2.0.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+
+## Support
+
+- **Documentation**: See `api-docs.md` for complete API reference
+- **Issues**: Report bugs and feature requests via GitHub Issues
+- **Community**: Join discussions in the project repository
+
+---
+
+**kvirtos2** - Simple VM management for Kubernetes clusters

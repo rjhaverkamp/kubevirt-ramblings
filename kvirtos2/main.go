@@ -23,8 +23,8 @@ func main() {
 		log.Fatalf("Failed to create KubeVirt client: %v", err)
 	}
 
-	// Create handlers
-	serverHandler := handlers.NewServerHandler(kubevirtClient)
+	// Create v1 handler
+	v1Handler := handlers.NewV1Handler(kubevirtClient)
 
 	// Setup Gin router
 	router := gin.Default()
@@ -44,37 +44,30 @@ func main() {
 	})
 
 	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	router.GET("/health", v1Handler.Health)
 
-	// Nova API compatible endpoints
-	v2 := router.Group("/v2.1")
+	// V1 API endpoints
+	v1 := router.Group("/api/v1")
 	{
-		// Server endpoints
-		v2.POST("/servers", serverHandler.CreateServer)
-		v2.GET("/servers", serverHandler.ListServers)
-		v2.GET("/servers/detail", serverHandler.ListServers) // Alias for detailed listing
-		v2.GET("/servers/:id", serverHandler.GetServer)
-		v2.DELETE("/servers/:id", serverHandler.DeleteServer)
-		v2.POST("/servers/:id/action", serverHandler.ServerAction)
-	}
-
-	// Also support the legacy /v2 endpoint for compatibility
-	v2Legacy := router.Group("/v2")
-	{
-		v2Legacy.POST("/servers", serverHandler.CreateServer)
-		v2Legacy.GET("/servers", serverHandler.ListServers)
-		v2Legacy.GET("/servers/detail", serverHandler.ListServers)
-		v2Legacy.GET("/servers/:id", serverHandler.GetServer)
-		v2Legacy.DELETE("/servers/:id", serverHandler.DeleteServer)
-		v2Legacy.POST("/servers/:id/action", serverHandler.ServerAction)
+		// VM endpoints
+		v1.GET("/vms", v1Handler.ListVMs)
+		v1.POST("/vms", v1Handler.CreateVM)
+		v1.GET("/vms/:name", v1Handler.GetVM)
+		v1.PUT("/vms/:name", v1Handler.UpdateVM)
+		v1.DELETE("/vms/:name", v1Handler.DeleteVM)
+		
+		// VM actions
+		v1.POST("/vms/:name/start", v1Handler.StartVM)
+		v1.POST("/vms/:name/stop", v1Handler.StopVM)
+		v1.POST("/vms/:name/restart", v1Handler.RestartVM)
+		v1.GET("/vms/:name/console", v1Handler.GetVMConsole)
 	}
 
 	// Start server
 	listenAddr := ":" + *port
 	log.Printf("Starting kvirtos2 server on %s", listenAddr)
 	log.Printf("Using namespace: %s", *namespace)
+	log.Printf("V1 API available at: /api/v1/vms")
 	if *kubeconfig != "" {
 		log.Printf("Using kubeconfig: %s", *kubeconfig)
 	} else {

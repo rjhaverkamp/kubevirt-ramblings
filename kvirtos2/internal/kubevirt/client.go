@@ -53,9 +53,9 @@ func NewClient(kubeconfig, namespace string) (*Client, error) {
 }
 
 // CreateVM creates a new virtual machine
-func (c *Client) CreateVM(ctx context.Context, req models.CreateServerParams) (*models.Server, error) {
+func (c *Client) CreateVM(ctx context.Context, req models.CreateVMParams) (*models.InternalVM, error) {
 	// Validate the request
-	if err := validateCreateRequest(req); err != nil {
+	if err := c.validateCreateRequest(req); err != nil {
 		return nil, NewValidationError("request", "", err.Error())
 	}
 
@@ -63,7 +63,7 @@ func (c *Client) CreateVM(ctx context.Context, req models.CreateServerParams) (*
 	vmID := uuid.New().String()
 
 	// Build VM specification
-	vmSpec := c.vmBuilder.BuildVMSpec(req, vmID)
+	vmSpec := c.vmBuilder.BuildVMSpecFromInternal(req, vmID)
 
 	// Create the VM in Kubernetes
 	createdVM, err := c.dynamicClient.Resource(VirtualMachineGVR).
@@ -73,12 +73,12 @@ func (c *Client) CreateVM(ctx context.Context, req models.CreateServerParams) (*
 		return nil, NewKubernetesError("create", "virtualmachine", c.namespace, req.Name, err)
 	}
 
-	// Convert to Nova API format and return
-	return c.convertVMToServer(createdVM, nil), nil
+	// Convert to internal format and return
+	return c.convertVMToInternal(createdVM, nil), nil
 }
 
 // GetVM retrieves a virtual machine by ID
-func (c *Client) GetVM(ctx context.Context, serverID string) (*models.Server, error) {
+func (c *Client) GetVM(ctx context.Context, serverID string) (*models.InternalVM, error) {
 	if err := validateServerID(serverID); err != nil {
 		return nil, NewValidationError("serverID", serverID, err.Error())
 	}
@@ -94,11 +94,11 @@ func (c *Client) GetVM(ctx context.Context, serverID string) (*models.Server, er
 		vmi, _ = c.getVMI(ctx, vm.GetName())
 	}
 
-	return c.convertVMToServer(vm, vmi), nil
+	return c.convertVMToInternal(vm, vmi), nil
 }
 
 // ListVMs lists all virtual machines managed by kvirtos2
-func (c *Client) ListVMs(ctx context.Context) ([]models.Server, error) {
+func (c *Client) ListVMs(ctx context.Context) ([]models.InternalVM, error) {
 	vmList, err := c.dynamicClient.Resource(VirtualMachineGVR).
 		Namespace(c.namespace).
 		List(ctx, metav1.ListOptions{
@@ -108,16 +108,16 @@ func (c *Client) ListVMs(ctx context.Context) ([]models.Server, error) {
 		return nil, NewKubernetesError("list", "virtualmachines", c.namespace, "", err)
 	}
 
-	servers := make([]models.Server, 0, len(vmList.Items))
+	vms := make([]models.InternalVM, 0, len(vmList.Items))
 	for _, vm := range vmList.Items {
 		var vmi *unstructured.Unstructured
 		if c.isVMRunning(&vm) {
 			vmi, _ = c.getVMI(ctx, vm.GetName())
 		}
-		servers = append(servers, *c.convertVMToServer(&vm, vmi))
+		vms = append(vms, *c.convertVMToInternal(&vm, vmi))
 	}
 
-	return servers, nil
+	return vms, nil
 }
 
 // DeleteVM deletes a virtual machine
@@ -257,8 +257,8 @@ func (c *Client) isVMRunning(vm *unstructured.Unstructured) bool {
 	return running
 }
 
-// convertVMToServer converts a KubeVirt VM to Nova API Server format
-func (c *Client) convertVMToServer(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) *models.Server {
+// convertVMToInternal converts a KubeVirt VM to internal VM format
+func (c *Client) convertVMToInternal(vm *unstructured.Unstructured, vmi *unstructured.Unstructured) *models.InternalVM {
 	labels := vm.GetLabels()
 	vmID := labels[VMIDLabel]
 	if vmID == "" {
@@ -266,36 +266,32 @@ func (c *Client) convertVMToServer(vm *unstructured.Unstructured, vmi *unstructu
 	}
 
 	// Use status mapper to determine states
-	status := c.statusMapper.GetVMStatus(vm, vmi)
-	powerState := c.statusMapper.GetPowerState(vm, vmi)
-	vmState := c.statusMapper.GetVMState(status)
+	status := c.statusMapper.GetInternalVMStatus(vm, vmi)
 
 	// Extract metadata from annotations
 	metadata := c.extractMetadata(vm.GetAnnotations())
 
 	// Extract network addresses
-	addresses := c.networkHandler.ExtractAddresses(vmi)
+	addresses := c.networkHandler.ExtractInternalAddresses(vmi)
 
-	return &models.Server{
-		ID:         vmID,
-		Name:       vm.GetName(),
-		Status:     status,
-		PowerState: powerState,
-		VMState:    vmState,
-		Created:    vm.GetCreationTimestamp().Time,
-		Updated:    vm.GetCreationTimestamp().Time,
-		Flavor: models.Flavor{
-			ID: labels[FlavorRefLabel],
-		},
-		Image: models.Image{
-			ID: labels[ImageRefLabel],
-		},
+	// Extract node information
+	node := c.extractNodeName(vmi)
+
+	// Extract resources
+	resources := c.extractInternalResources(labels)
+
+	return &models.InternalVM{
+		ID:        vmID,
+		Name:      vm.GetName(),
+		Status:    status,
+		Created:   vm.GetCreationTimestamp().Time,
+		Updated:   vm.GetCreationTimestamp().Time,
+		Image:     labels[ImageRefLabel],
+		Flavor:    labels[FlavorRefLabel],
 		Metadata:  metadata,
 		Addresses: addresses,
-		TenantID:  c.namespace,
-		UserID:    DefaultUserID,
-		HostID:    "",
-		Progress:  100,
+		Node:      node,
+		Resources: resources,
 	}
 }
 
@@ -313,4 +309,53 @@ func (c *Client) extractMetadata(annotations map[string]string) map[string]strin
 		}
 	}
 	return metadata
+}
+
+// validateCreateRequest validates the VM creation request
+func (c *Client) validateCreateRequest(req models.CreateVMParams) error {
+	if err := validateVMName(req.Name); err != nil {
+		return err
+	}
+
+	if req.Image == "" {
+		return fmt.Errorf("image is required")
+	}
+
+	if req.Flavor == "" {
+		return fmt.Errorf("flavor is required")
+	}
+
+	if !IsValidImage(req.Image) {
+		return fmt.Errorf("unknown image: %s", req.Image)
+	}
+
+	if !IsValidFlavor(req.Flavor) {
+		return fmt.Errorf("unknown flavor: %s", req.Flavor)
+	}
+
+	return nil
+}
+
+// extractNodeName extracts the node name from VMI
+func (c *Client) extractNodeName(vmi *unstructured.Unstructured) string {
+	if vmi == nil {
+		return ""
+	}
+	
+	nodeName, _, _ := unstructured.NestedString(vmi.Object, "status", "nodeName")
+	return nodeName
+}
+
+// extractInternalResources extracts resource information
+func (c *Client) extractInternalResources(labels map[string]string) *models.InternalResources {
+	flavorRef := labels[FlavorRefLabel]
+	if flavorRef == "" {
+		return nil
+	}
+	
+	flavorConfig := GetFlavorConfig(flavorRef)
+	return &models.InternalResources{
+		CPU:    fmt.Sprintf("%dm", flavorConfig.CPU),
+		Memory: fmt.Sprintf("%dMi", flavorConfig.Memory),
+	}
 }

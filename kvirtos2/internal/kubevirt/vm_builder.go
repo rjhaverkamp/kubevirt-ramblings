@@ -20,27 +20,27 @@ func NewVMBuilder(namespace string) *VMBuilder {
 	}
 }
 
-// BuildVMSpec builds a complete VirtualMachine specification from a creation request
-func (b *VMBuilder) BuildVMSpec(req models.CreateServerParams, vmID string) *unstructured.Unstructured {
-	flavorConfig := GetFlavorConfig(req.FlavorRef)
-	imageConfig := GetImageConfig(req.ImageRef)
+// BuildVMSpecFromInternal builds a complete VirtualMachine specification from an internal creation request
+func (b *VMBuilder) BuildVMSpecFromInternal(req models.CreateVMParams, vmID string) *unstructured.Unstructured {
+	flavorConfig := GetFlavorConfig(req.Flavor)
+	imageConfig := GetImageConfig(req.Image)
 	
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": KubeVirtAPIVersion,
 			"kind":       VMKind,
-			"metadata":   b.buildMetadata(req, vmID),
-			"spec":       b.buildSpec(req, vmID, flavorConfig, imageConfig),
+			"metadata":   b.buildMetadataFromInternal(req, vmID),
+			"spec":       b.buildSpecFromInternal(req, vmID, flavorConfig, imageConfig),
 		},
 	}
 }
 
-// buildMetadata constructs the metadata section of the VM
-func (b *VMBuilder) buildMetadata(req models.CreateServerParams, vmID string) map[string]interface{} {
+// buildMetadataFromInternal constructs the metadata section of the VM from internal request
+func (b *VMBuilder) buildMetadataFromInternal(req models.CreateVMParams, vmID string) map[string]interface{} {
 	metadata := map[string]interface{}{
 		"name":      req.Name,
 		"namespace": b.namespace,
-		"labels":    b.buildLabels(req, vmID),
+		"labels":    b.buildLabelsFromInternal(req, vmID),
 	}
 	
 	// Add annotations for metadata if provided
@@ -51,13 +51,13 @@ func (b *VMBuilder) buildMetadata(req models.CreateServerParams, vmID string) ma
 	return metadata
 }
 
-// buildLabels constructs the labels for the VM
-func (b *VMBuilder) buildLabels(req models.CreateServerParams, vmID string) map[string]interface{} {
+// buildLabelsFromInternal constructs the labels for the VM from internal request
+func (b *VMBuilder) buildLabelsFromInternal(req models.CreateVMParams, vmID string) map[string]interface{} {
 	return map[string]interface{}{
 		AppLabel:       AppLabelValue,
 		VMIDLabel:      vmID,
-		ImageRefLabel:  req.ImageRef,
-		FlavorRefLabel: req.FlavorRef,
+		ImageRefLabel:  req.Image,
+		FlavorRefLabel: req.Flavor,
 	}
 }
 
@@ -70,19 +70,19 @@ func (b *VMBuilder) buildAnnotations(metadata map[string]string) map[string]inte
 	return annotations
 }
 
-// buildSpec constructs the spec section of the VM
-func (b *VMBuilder) buildSpec(req models.CreateServerParams, vmID string, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
+// buildSpecFromInternal constructs the spec section of the VM from internal request
+func (b *VMBuilder) buildSpecFromInternal(req models.CreateVMParams, vmID string, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
 	return map[string]interface{}{
-		"running":  false, // Always start VMs in stopped state
-		"template": b.buildTemplate(req, vmID, flavorConfig, imageConfig),
+		"running":  req.AutoStart, // Use autoStart from request
+		"template": b.buildTemplateFromInternal(req, vmID, flavorConfig, imageConfig),
 	}
 }
 
-// buildTemplate constructs the template section of the VM spec
-func (b *VMBuilder) buildTemplate(req models.CreateServerParams, vmID string, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
+// buildTemplateFromInternal constructs the template section of the VM spec from internal request
+func (b *VMBuilder) buildTemplateFromInternal(req models.CreateVMParams, vmID string, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
 	return map[string]interface{}{
 		"metadata": b.buildTemplateMetadata(vmID),
-		"spec":     b.buildVMISpec(req, flavorConfig, imageConfig),
+		"spec":     b.buildVMISpecFromInternal(req, flavorConfig, imageConfig),
 	}
 }
 
@@ -96,20 +96,20 @@ func (b *VMBuilder) buildTemplateMetadata(vmID string) map[string]interface{} {
 	}
 }
 
-// buildVMISpec constructs the VirtualMachineInstance specification
-func (b *VMBuilder) buildVMISpec(req models.CreateServerParams, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
+// buildVMISpecFromInternal constructs the VirtualMachineInstance specification from internal request
+func (b *VMBuilder) buildVMISpecFromInternal(req models.CreateVMParams, flavorConfig FlavorConfig, imageConfig ImageConfig) map[string]interface{} {
 	return map[string]interface{}{
-		"domain":   b.buildDomainSpec(flavorConfig, req.Networks),
-		"networks": b.buildNetworksSpec(req.Networks),
+		"domain":   b.buildDomainSpecFromInternal(flavorConfig, req.Networks),
+		"networks": b.buildNetworksSpecFromInternal(req.Networks),
 		"volumes":  b.buildVolumesSpec(imageConfig),
 	}
 }
 
-// buildDomainSpec constructs the domain specification
-func (b *VMBuilder) buildDomainSpec(flavorConfig FlavorConfig, networks []models.Network) map[string]interface{} {
+// buildDomainSpecFromInternal constructs the domain specification from internal request
+func (b *VMBuilder) buildDomainSpecFromInternal(flavorConfig FlavorConfig, networks []models.InternalNetwork) map[string]interface{} {
 	return map[string]interface{}{
 		"resources": b.buildResourcesSpec(flavorConfig),
-		"devices":   b.buildDevicesSpec(networks),
+		"devices":   b.buildDevicesSpecFromInternal(networks),
 	}
 }
 
@@ -123,11 +123,11 @@ func (b *VMBuilder) buildResourcesSpec(flavorConfig FlavorConfig) map[string]int
 	}
 }
 
-// buildDevicesSpec constructs the devices specification
-func (b *VMBuilder) buildDevicesSpec(networks []models.Network) map[string]interface{} {
+// buildDevicesSpecFromInternal constructs the devices specification from internal request
+func (b *VMBuilder) buildDevicesSpecFromInternal(networks []models.InternalNetwork) map[string]interface{} {
 	return map[string]interface{}{
 		"disks":      b.buildDisksSpec(),
-		"interfaces": b.buildInterfacesSpec(networks),
+		"interfaces": b.buildInterfacesSpecFromInternal(networks),
 	}
 }
 
@@ -143,13 +143,13 @@ func (b *VMBuilder) buildDisksSpec() []map[string]interface{} {
 	}
 }
 
-// buildInterfacesSpec constructs the interfaces specification
-func (b *VMBuilder) buildInterfacesSpec(networks []models.Network) []map[string]interface{} {
+// buildInterfacesSpecFromInternal constructs the interfaces specification from internal request
+func (b *VMBuilder) buildInterfacesSpecFromInternal(networks []models.InternalNetwork) []map[string]interface{} {
 	return b.networkHandler.BuildInterfacesForVM(networks)
 }
 
-// buildNetworksSpec constructs the networks specification
-func (b *VMBuilder) buildNetworksSpec(networks []models.Network) []map[string]interface{} {
+// buildNetworksSpecFromInternal constructs the networks specification from internal request
+func (b *VMBuilder) buildNetworksSpecFromInternal(networks []models.InternalNetwork) []map[string]interface{} {
 	return b.networkHandler.BuildNetworksForVM(networks)
 }
 
@@ -181,16 +181,16 @@ func (b *VMBuilder) BuildVMUpdateSpec(vm *unstructured.Unstructured, running boo
 	return updated
 }
 
-// ValidateVMSpec validates a VM specification before creation
-func (b *VMBuilder) ValidateVMSpec(req models.CreateServerParams) error {
+// ValidateVMSpecFromInternal validates a VM specification from internal request before creation
+func (b *VMBuilder) ValidateVMSpecFromInternal(req models.CreateVMParams) error {
 	// Validate flavor
-	if !IsValidFlavor(req.FlavorRef) {
-		return NewValidationError("flavorRef", req.FlavorRef, "unknown flavor")
+	if !IsValidFlavor(req.Flavor) {
+		return NewValidationError("flavor", req.Flavor, "unknown flavor")
 	}
 	
 	// Validate image
-	if !IsValidImage(req.ImageRef) {
-		return NewValidationError("imageRef", req.ImageRef, "unknown image")
+	if !IsValidImage(req.Image) {
+		return NewValidationError("image", req.Image, "unknown image")
 	}
 	
 	// Validate networks if specified
@@ -203,15 +203,15 @@ func (b *VMBuilder) ValidateVMSpec(req models.CreateServerParams) error {
 	return nil
 }
 
-// GetVMSpecSummary returns a summary of the VM specification
-func (b *VMBuilder) GetVMSpecSummary(req models.CreateServerParams) *VMSpecSummary {
-	flavorConfig := GetFlavorConfig(req.FlavorRef)
-	imageConfig := GetImageConfig(req.ImageRef)
+// GetVMSpecSummaryFromInternal returns a summary of the VM specification from internal request
+func (b *VMBuilder) GetVMSpecSummaryFromInternal(req models.CreateVMParams) *VMSpecSummary {
+	flavorConfig := GetFlavorConfig(req.Flavor)
+	imageConfig := GetImageConfig(req.Image)
 	
 	return &VMSpecSummary{
 		Name:        req.Name,
-		Flavor:      req.FlavorRef,
-		Image:       req.ImageRef,
+		Flavor:      req.Flavor,
+		Image:       req.Image,
 		CPU:         flavorConfig.CPU,
 		Memory:      flavorConfig.Memory,
 		ImagePath:   imageConfig.ContainerImage,

@@ -15,8 +15,8 @@ type ImageConfig struct {
 // Flavors defines the available VM flavors
 var Flavors = map[string]FlavorConfig{
 	"m1.tiny": {
-		CPU:    500,  // 0.5 CPU
-		Memory: 512,  // 512MB RAM
+		CPU:    500, // 0.5 CPU
+		Memory: 512, // 512MB RAM
 	},
 	"m1.small": {
 		CPU:    1000, // 1 CPU
@@ -34,6 +34,10 @@ var Flavors = map[string]FlavorConfig{
 
 // Images defines the available VM images
 var Images = map[string]ImageConfig{
+	"ubuntu-24": {
+		ContainerImage: "ghcr.io/rjhaverkamp/ubuntu-2404:latest",
+		Description:    "Ubuntu 24 Cloud Image",
+	},
 	"ubuntu-20.04": {
 		ContainerImage: "quay.io/kubevirt/ubuntu-cloud-container-disk-demo",
 		Description:    "Ubuntu 20.04 Cloud Image",

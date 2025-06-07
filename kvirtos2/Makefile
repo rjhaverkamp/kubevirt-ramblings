@@ -22,7 +22,10 @@ clean:
 
 # Build Docker image
 docker-build:
-	docker build -t kvirtos2:latest .
+	docker build -t ghcr.io/rjhaverkamp/dbridge:kvirtos2-v1-api .
+
+docker-push:
+	docker push ghcr.io/rjhaverkamp/dbridge:kvirtos2-v1-api
 
 # Deploy to Kubernetes
 deploy:

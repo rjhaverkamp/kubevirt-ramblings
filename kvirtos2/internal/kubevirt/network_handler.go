@@ -14,9 +14,9 @@ func NewNetworkHandler() *NetworkHandler {
 	return &NetworkHandler{}
 }
 
-// ExtractAddresses extracts IP addresses from a VMI and returns them in Nova API format
-func (n *NetworkHandler) ExtractAddresses(vmi *unstructured.Unstructured) map[string][]models.Address {
-	addresses := make(map[string][]models.Address)
+// ExtractInternalAddresses extracts IP addresses from a VMI and returns them in internal format
+func (n *NetworkHandler) ExtractInternalAddresses(vmi *unstructured.Unstructured) map[string][]models.InternalAddress {
+	addresses := make(map[string][]models.InternalAddress)
 	
 	if vmi == nil {
 		return addresses
@@ -36,8 +36,8 @@ func (n *NetworkHandler) ExtractAddresses(vmi *unstructured.Unstructured) map[st
 }
 
 // parseInterfaces parses the VMI interfaces and extracts IP addresses
-func (n *NetworkHandler) parseInterfaces(interfaces []interface{}) []models.Address {
-	var addresses []models.Address
+func (n *NetworkHandler) parseInterfaces(interfaces []interface{}) []models.InternalAddress {
+	var addresses []models.InternalAddress
 	
 	for _, iface := range interfaces {
 		ifaceMap, ok := iface.(map[string]interface{})
@@ -47,19 +47,19 @@ func (n *NetworkHandler) parseInterfaces(interfaces []interface{}) []models.Addr
 		
 		// Extract IP address from interface
 		if ip, found := ifaceMap["ipAddress"].(string); found && ip != "" {
-			addresses = append(addresses, models.Address{
+			addresses = append(addresses, models.InternalAddress{
 				Version: 4,
-				Addr:    ip,
-				Type:    "fixed",
+				IP:      ip,
+				Type:    models.InternalAddressTypeInternal,
 			})
 		}
 		
 		// Also check for IPv6 addresses
 		if ipv6, found := ifaceMap["ipv6Address"].(string); found && ipv6 != "" {
-			addresses = append(addresses, models.Address{
+			addresses = append(addresses, models.InternalAddress{
 				Version: 6,
-				Addr:    ipv6,
-				Type:    "fixed",
+				IP:      ipv6,
+				Type:    models.InternalAddressTypeInternal,
 			})
 		}
 		
@@ -73,10 +73,10 @@ func (n *NetworkHandler) parseInterfaces(interfaces []interface{}) []models.Addr
 						version = 6
 					}
 					
-					addresses = append(addresses, models.Address{
+					addresses = append(addresses, models.InternalAddress{
 						Version: version,
-						Addr:    ip,
-						Type:    "fixed",
+						IP:      ip,
+						Type:    models.InternalAddressTypeInternal,
 					})
 				}
 			}
@@ -124,12 +124,12 @@ func (n *NetworkHandler) GetNetworkInfo(vmi *unstructured.Unstructured) (*Networ
 	if vmi == nil {
 		return &NetworkInfo{
 			Networks:   []string{},
-			Addresses:  map[string][]models.Address{},
+			Addresses:  map[string][]models.InternalAddress{},
 			Status:     "disconnected",
 		}, nil
 	}
 	
-	addresses := n.ExtractAddresses(vmi)
+	addresses := n.ExtractInternalAddresses(vmi)
 	networks := n.extractNetworkNames(vmi)
 	status := n.getNetworkStatus(vmi)
 	
@@ -142,9 +142,9 @@ func (n *NetworkHandler) GetNetworkInfo(vmi *unstructured.Unstructured) (*Networ
 
 // NetworkInfo represents network information for a VM
 type NetworkInfo struct {
-	Networks  []string                        `json:"networks"`
-	Addresses map[string][]models.Address     `json:"addresses"`
-	Status    string                          `json:"status"`
+	Networks  []string                            `json:"networks"`
+	Addresses map[string][]models.InternalAddress `json:"addresses"`
+	Status    string                              `json:"status"`
 }
 
 // extractNetworkNames extracts network names from VMI spec
@@ -195,7 +195,7 @@ func (n *NetworkHandler) getNetworkStatus(vmi *unstructured.Unstructured) string
 }
 
 // ValidateNetworkConfiguration validates network configuration for VM creation
-func (n *NetworkHandler) ValidateNetworkConfiguration(networks []models.Network) error {
+func (n *NetworkHandler) ValidateNetworkConfiguration(networks []models.InternalNetwork) error {
 	if len(networks) == 0 {
 		// No networks specified, will use default
 		return nil
@@ -211,25 +211,30 @@ func (n *NetworkHandler) ValidateNetworkConfiguration(networks []models.Network)
 }
 
 // validateSingleNetwork validates a single network configuration
-func (n *NetworkHandler) validateSingleNetwork(network models.Network, index int) error {
-	if network.UUID == "" && network.Port == "" {
-		return fmt.Errorf("network at index %d must specify either UUID or port", index)
+func (n *NetworkHandler) validateSingleNetwork(network models.InternalNetwork, index int) error {
+	if network.Name == "" {
+		return fmt.Errorf("network at index %d must specify a name", index)
 	}
 	
-	if network.UUID != "" && network.Port != "" {
-		return fmt.Errorf("network at index %d cannot specify both UUID and port", index)
-	}
-	
-	if network.FixedIP != "" {
-		// Basic IP format validation could be added here
-		// For now, we just check it's not empty if specified
+	if network.Type != "" {
+		validTypes := []string{models.InternalNetworkTypePod, models.InternalNetworkTypeBridge, models.InternalNetworkTypeSRIOV}
+		valid := false
+		for _, validType := range validTypes {
+			if network.Type == validType {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("network at index %d has invalid type: %s", index, network.Type)
+		}
 	}
 	
 	return nil
 }
 
 // BuildNetworksForVM builds network specifications for VM creation
-func (n *NetworkHandler) BuildNetworksForVM(requestNetworks []models.Network) []map[string]interface{} {
+func (n *NetworkHandler) BuildNetworksForVM(requestNetworks []models.InternalNetwork) []map[string]interface{} {
 	networks := make([]map[string]interface{}, 0)
 	
 	// Always add default network first
@@ -237,14 +242,23 @@ func (n *NetworkHandler) BuildNetworksForVM(requestNetworks []models.Network) []
 	
 	// Add additional networks if specified
 	for _, network := range requestNetworks {
-		if network.UUID != "" {
-			// Handle Multus network attachment
-			networks = append(networks, map[string]interface{}{
-				"name": fmt.Sprintf("net-%s", network.UUID),
-				"multus": map[string]interface{}{
-					"networkName": network.UUID,
-				},
-			})
+		if network.Name != "" && network.Name != DefaultNetworkName {
+			// Handle additional network attachment
+			netSpec := map[string]interface{}{
+				"name": network.Name,
+			}
+			
+			// Add network type specific configuration
+			switch network.Type {
+			case models.InternalNetworkTypeBridge:
+				netSpec["bridge"] = map[string]interface{}{}
+			case models.InternalNetworkTypeSRIOV:
+				netSpec["sriov"] = map[string]interface{}{}
+			default:
+				netSpec["pod"] = map[string]interface{}{}
+			}
+			
+			networks = append(networks, netSpec)
 		}
 	}
 	
@@ -252,7 +266,7 @@ func (n *NetworkHandler) BuildNetworksForVM(requestNetworks []models.Network) []
 }
 
 // BuildInterfacesForVM builds interface specifications for VM creation
-func (n *NetworkHandler) BuildInterfacesForVM(requestNetworks []models.Network) []map[string]interface{} {
+func (n *NetworkHandler) BuildInterfacesForVM(requestNetworks []models.InternalNetwork) []map[string]interface{} {
 	interfaces := make([]map[string]interface{}, 0)
 	
 	// Always add default interface first
@@ -260,11 +274,22 @@ func (n *NetworkHandler) BuildInterfacesForVM(requestNetworks []models.Network) 
 	
 	// Add additional interfaces if specified
 	for _, network := range requestNetworks {
-		if network.UUID != "" {
-			interfaces = append(interfaces, map[string]interface{}{
-				"name":   fmt.Sprintf("net-%s", network.UUID),
-				"bridge": map[string]interface{}{},
-			})
+		if network.Name != "" && network.Name != DefaultNetworkName {
+			iface := map[string]interface{}{
+				"name": network.Name,
+			}
+			
+			// Add interface type specific configuration
+			switch network.Type {
+			case models.InternalNetworkTypeBridge:
+				iface["bridge"] = map[string]interface{}{}
+			case models.InternalNetworkTypeSRIOV:
+				iface["sriov"] = map[string]interface{}{}
+			default:
+				iface["masquerade"] = map[string]interface{}{}
+			}
+			
+			interfaces = append(interfaces, iface)
 		}
 	}
 	
